@@ -9,15 +9,15 @@ class Mapper(nn.Module):
         
         self.reduce_layer = nn.Sequential(nn.Linear(64*4*4, args['reduced_dim']), nn.ReLU(),nn.BatchNorm1d(args['reduced_dim']))
         
-        self.cont_layer_P = nn.Sequential(nn.Linear(args['reduced_dim'], args['cont_dim_P']), nn.ReLU(),nn.BatchNorm1d(args['cont_dim_P']))
-        self.cont_layer_G = nn.Sequential(nn.Linear(args['reduced_dim'], args['cont_dim_G']), nn.ReLU(),nn.BatchNorm1d(args['cont_dim_G']))
+        self.code_P_layer = nn.Sequential(nn.Linear(args['reduced_dim'], args['code_P_dim']), nn.ReLU(),nn.BatchNorm1d(args['code_P_dim']))
+        self.code_G_layer = nn.Sequential(nn.Linear(args['reduced_dim'], args['code_G_dim']), nn.ReLU(),nn.BatchNorm1d(args['code_G_dim']))
         self.latent_layer = nn.Sequential(nn.Linear(args['reduced_dim'], args['latent_dim']), nn.ReLU(),nn.BatchNorm1d(args['latent_dim']))
         
     def forward(self, encoded):
         encoded = encoded.view(-1,64*4*4)
         reduced = self.reduce_layer(encoded)
-        cont_code_P = self.cont_layer_P(reduced)
-        cont_code_G = self.cont_layer_G(reduced)
+        cont_code_P = self.code_P_layer(reduced)
+        cont_code_G = self.code_G_layer(reduced)
         latent = self.latent_layer(reduced)
         return cont_code_P, cont_code_G, latent
         
@@ -26,7 +26,7 @@ class Predictor(nn.Module):
     def __init__(self,args):
         super(Predictor, self).__init__()
             
-        self.input_dim = args['cont_dim_P']
+        self.input_dim = args['code_P_dim']
         self.predictor = nn.Sequential(nn.Linear(self.input_dim, 128),nn.ReLU(), nn.Dropout(0.2),
                                         nn.Linear(128, 64), nn.ReLU(),nn.Dropout(0.2),
                                         nn.Linear(64,2)) # predict class (1 or 7)
@@ -91,17 +91,18 @@ class Discriminator(nn.Module):
         self.adv_layer = nn.Sequential(nn.Linear(128*downsample_size*downsample_size, 1)) # real or fake 예측 
         self.disc_layer = nn.Sequential(nn.Linear(128*downsample_size*downsample_size, args['n_classes']),
                                        nn.Softmax()) # class 예측
-        self.cont_P_layer = nn.Sequential(nn.Linear(128*downsample_size*downsample_size, 
-                                                    args['cont_dim_P'])) # cont_code_P 예측
-        self.cont_G_layer = nn.Sequential(nn.Linear(128*downsample_size*downsample_size, 
-                                                    args['cont_dim_G'])) # cont_code_G 예측
+        self.code_P_layer = nn.Sequential(nn.Linear(128*downsample_size*downsample_size, 
+                                                    args['code_P_dim'])) # cont_code_P 예측
+        self.code_G_layer = nn.Sequential(nn.Linear(128*downsample_size*downsample_size, 
+                                                    args['code_G_dim'])) # cont_code_G 예측
         
     def forward(self, img):
         out = self.conv_blocks(img)
         out = out.view(out.shape[0], -1)
+    
         reality = self.adv_layer(out)
         pred_label = self.disc_layer(out)
-        pred_cont_P = self.cont_P_layer(out)
-        pred_cont_G = self.cont_G_layer(out)
+        pred_cont_P = self.code_P_layer(out)
+        pred_cont_G = self.code_G_layer(out)
         
         return reality, pred_label, pred_cont_P, pred_cont_G
