@@ -7,21 +7,24 @@ class Mapper(nn.Module):
     def __init__(self,args):
         super(Mapper, self).__init__()
         
-        self.reduce_layer = nn.Sequential(nn.Linear(64*4*4, args['reduced_dim']), nn.ReLU(),nn.BatchNorm1d(args['reduced_dim']))
+        self.reduce_layer = nn.Sequential(nn.Linear(64*4*4, args['reduced_dim'],bias=False), 
+                                          nn.ReLU(),nn.BatchNorm1d(args['reduced_dim']))
         
-        self.code_P_layer = nn.Sequential(nn.Linear(args['reduced_dim'], args['code_P_dim']), nn.ReLU(),nn.BatchNorm1d(args['code_P_dim']))
-        self.code_G_layer = nn.Sequential(nn.Linear(args['reduced_dim'], args['code_G_dim']), nn.ReLU(),nn.BatchNorm1d(args['code_G_dim']))
-        self.latent_layer = nn.Sequential(nn.Linear(args['reduced_dim'], args['latent_dim']), nn.ReLU(),nn.BatchNorm1d(args['latent_dim']))
+        self.code_P_layer = nn.Sequential(nn.Linear(args['reduced_dim'], args['code_P_dim'],bias=False), 
+                                          nn.ReLU(),nn.BatchNorm1d(args['code_P_dim']))
+        self.code_G_layer = nn.Sequential(nn.Linear(args['reduced_dim'], args['code_G_dim'],bias=False), 
+                                          nn.ReLU(),nn.BatchNorm1d(args['code_G_dim']))
+        self.latent_layer = nn.Sequential(nn.Linear(args['reduced_dim'], args['latent_dim'],bias=False), 
+                                          nn.ReLU(),nn.BatchNorm1d(args['latent_dim']))
         
     def forward(self, encoded):
         encoded = encoded.view(-1,64*4*4)
         reduced = self.reduce_layer(encoded)
-        cont_code_P = self.code_P_layer(reduced)
-        cont_code_G = self.code_G_layer(reduced)
+        code_P = self.code_P_layer(reduced)
+        code_G = self.code_G_layer(reduced)
         latent = self.latent_layer(reduced)
-        return cont_code_P, cont_code_G, latent
+        return code_P, code_G, latent
         
-
 class Predictor(nn.Module):
     def __init__(self,args):
         super(Predictor, self).__init__()
@@ -30,38 +33,36 @@ class Predictor(nn.Module):
         self.predictor = nn.Sequential(nn.Linear(self.input_dim, 128),nn.ReLU(), nn.Dropout(0.2),
                                         nn.Linear(128, 64), nn.ReLU(),nn.Dropout(0.2),
                                         nn.Linear(64,2)) # predict class (1 or 7)
-    def forward(self, cont_code_P):
-        predicted = self.predictor(cont_code_P)
+        # self.simple_predictor = nn.Linear(self.input_dim, 2)
+        
+    def forward(self, code_P):
+        predicted = self.predictor(code_P)
         return predicted
 
 class Generator(nn.Module):
-    def __init__(self,args):
+    def __init__(self, args):
         super(Generator, self).__init__()
-        input_dim = args['reduced_dim'] + args['n_classes'] # 32 + 2 + 2 + 1
+        input_dim = args['reduced_dim']  # 32 + 2 + 1 = 35
         
         self.init_size = args['img_size'] // 4
         # conv에 넣을 수 있도록 dim_adjust
-        self.fc = nn.Sequential(nn.Linear(input_dim, 256 * self.init_size * self.init_size ))
+        self.fc = nn.Sequential(nn.Linear(input_dim, 128 * self.init_size * self.init_size ))
         
         self.conv_blocks = nn.Sequential(
-            nn.BatchNorm2d(256), nn.Upsample(scale_factor=2),
-            nn.Conv2d(256,256,3, stride=1, padding=1), nn.BatchNorm2d(256,0.8), nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv2d(256,128,3, stride=1, padding=1), nn.BatchNorm2d(128,0.8), nn.LeakyReLU(0.2, inplace=True),
+            nn.BatchNorm2d(128), nn.Upsample(scale_factor=2),
+            nn.Conv2d(128,128,3, stride=1, padding=1), nn.BatchNorm2d(128,0.8), nn.LeakyReLU(0.2, inplace=True),
             
             nn.Upsample(scale_factor=2),
             nn.Conv2d(128,64,3, stride=1, padding=1), nn.BatchNorm2d(64,0.8), nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv2d(64,32,3, stride=1, padding=1), nn.BatchNorm2d(32,0.8), nn.LeakyReLU(0.2, inplace=True),
-            
-            nn.Conv2d(32,args['channels'], 3, stride=1, padding=1), 
+        
+            nn.Conv2d(64,args['channels'], 3, stride=1, padding=1), 
             nn.Tanh()
         )
         
-    def forward(self, labels, cont_code_P, cont_code_G, latent):
-        gen_input = torch.cat((labels, cont_code_P, cont_code_G, latent), dim=-1) # cat => 32+2+2+1 = 37 \
-        # print(gen_input.shape, args['reduced_dim'])
-        #  mat1 and mat2 shapes cannot be multiplied (128x37 and 36x8192)
+    def forward(self, code_P, code_G, latent):
+        gen_input = torch.cat((code_P, code_G, latent), dim=-1) # cat => 32+2+1 = 35 \
         out = self.fc(gen_input)    
-        out = out.view(out.shape[0], 256, self.init_size, self.init_size) # block화
+        out = out.view(out.shape[0], 128, self.init_size, self.init_size) # block화
         img = self.conv_blocks(out)
         
         return img
@@ -92,17 +93,16 @@ class Discriminator(nn.Module):
         self.disc_layer = nn.Sequential(nn.Linear(128*downsample_size*downsample_size, args['n_classes']),
                                        nn.Softmax()) # class 예측
         self.code_P_layer = nn.Sequential(nn.Linear(128*downsample_size*downsample_size, 
-                                                    args['code_P_dim'])) # cont_code_P 예측
+                                                    args['code_P_dim'])) # code_P 예측
         self.code_G_layer = nn.Sequential(nn.Linear(128*downsample_size*downsample_size, 
-                                                    args['code_G_dim'])) # cont_code_G 예측
+                                                    args['code_G_dim'])) # code_G 예측
         
     def forward(self, img):
         out = self.conv_blocks(img)
         out = out.view(out.shape[0], -1)
     
         reality = self.adv_layer(out)
-        pred_label = self.disc_layer(out)
-        pred_cont_P = self.code_P_layer(out)
-        pred_cont_G = self.code_G_layer(out)
+        pred_code_P = self.code_P_layer(out)
+        pred_code_G = self.code_G_layer(out)
         
-        return reality, pred_label, pred_cont_P, pred_cont_G
+        return reality, pred_code_P, pred_code_G
