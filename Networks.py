@@ -1,6 +1,6 @@
 import torch
-import torch.nn as nn
-
+from torch import nn
+import torch.nn.functional as F 
 
 
 class Mapper(nn.Module):
@@ -37,12 +37,12 @@ class Predictor(nn.Module):
         
     def forward(self, code_P):
         predicted = self.predictor(code_P)
-        return predicted
+        return F.log_softmax(predicted)
 
 class Generator(nn.Module):
     def __init__(self, args):
         super(Generator, self).__init__()
-        input_dim = args['reduced_dim']  # 32 + 2 + 1 = 35
+        input_dim = args['reduced_dim'] + args['n_classes']  # 32 + 2 + 1 = 35
         
         self.init_size = args['img_size'] // 4
         # conv에 넣을 수 있도록 dim_adjust
@@ -59,8 +59,8 @@ class Generator(nn.Module):
             nn.Tanh()
         )
         
-    def forward(self, code_P, code_G, latent):
-        gen_input = torch.cat((code_P, code_G, latent), dim=-1) # cat => 32+2+1 = 35 \
+    def forward(self, label, code_P, code_G, latent):
+        gen_input = torch.cat((label, code_P, code_G, latent), dim=-1) # cat => 32+2+1 = 35 \
         out = self.fc(gen_input)    
         out = out.view(out.shape[0], 128, self.init_size, self.init_size) # block화
         img = self.conv_blocks(out)
@@ -102,7 +102,8 @@ class Discriminator(nn.Module):
         out = out.view(out.shape[0], -1)
     
         reality = self.adv_layer(out)
+        pred_label = self.disc_layer(out)
         pred_code_P = self.code_P_layer(out)
         pred_code_G = self.code_G_layer(out)
         
-        return reality, pred_code_P, pred_code_G
+        return reality, pred_label, pred_code_P, pred_code_G
